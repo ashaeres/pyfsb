@@ -365,7 +365,7 @@ class FSB():
 
                 claa = np.zeros((len(field1), len(field2), 3*self.nside)) 
 
-                if same is True:
+                if same:
                     for n in range(len(field1)):
                         for m in range(n, len(field2)):
                             cross = nmt.compute_coupled_cell(field1[n], field2[m])[0] 
@@ -378,7 +378,7 @@ class FSB():
                                       
             else: 
 
-                if same is True: # auto power spectra, binned
+                if same: # auto power spectra, binned
                     claa = np.array([wksp.decouple_cell(nmt.compute_coupled_cell(fi, fi))[0] for fi in field1])
 
                 else: # cross power spectra, binned
@@ -434,12 +434,9 @@ class FSB():
         fmask_1 = nmt.NmtField(self.mask1, None, spin=0)
         fmask_2 = nmt.NmtField(self.mask2, None, spin=0)
         # TODO: maybe make them attributes?
-        cw_fsbfsb = nmt.NmtCovarianceWorkspace()
-        cw_fsbfsb.compute_coupling_coefficients(fmask_r, fmask_2, fmask_r, fmask_2)
-        cw_fsbcls = nmt.NmtCovarianceWorkspace()
-        cw_fsbcls.compute_coupling_coefficients(fmask_r, fmask_2, fmask_1, fmask_2)
-        cw_clscls = nmt.NmtCovarianceWorkspace()
-        cw_clscls.compute_coupling_coefficients(fmask_1, fmask_2, fmask_1, fmask_2)
+        cw_fsbfsb = nmt.NmtCovarianceWorkspace(fmask_r, fmask_2, fmask_r, fmask_2)
+        cw_fsbcls = nmt.NmtCovarianceWorkspace(fmask_r, fmask_2, fmask_1, fmask_2)
+        cw_clscls = nmt.NmtCovarianceWorkspace(fmask_1, fmask_2, fmask_1, fmask_2)
 
         gauss_cov = np.zeros((self.nbands+1, self.nbands+1, self.b, self.b)) 
 
@@ -456,7 +453,10 @@ class FSB():
                 cla1b1 = self.fsb_unbinned_pure[n] #/ self.fsky_fsb_pure
                 cla1b2 = self.fsb_unbinned[n] #/ self.fsky_fsb 
             
-            covij_fsb = nmt.gaussian_covariance(cw_fsbcls, 0, 0, 0, 0, [cla1b1], [cla1b2], [cla2b1], [cla2b2], self.w_fsb, self.w_cls_12)
+            covij_fsb = cw_fsbcls.gaussian_covariance(
+                # cw_fsbcls, 0, 0, 0, 0, 
+                [cla1b1], [cla1b2], [cla2b1], [cla2b2], 
+                self.w_fsb, self.w_cls_12)
             gauss_cov[n, -1] = covij_fsb
             gauss_cov[-1, n] = covij_fsb.T # TODO: changed
 
@@ -471,21 +471,27 @@ class FSB():
                     cla1b1 = self.cls_1sq1sq_unbinned[n,m] #/ self.fsky_cls_rr
                     cla2b1 = self.fsb_unbinned[m] #/ self.fsky_fsb 
 
-                covij_fsb = nmt.gaussian_covariance(cw_fsbfsb, 0, 0, 0, 0, [cla1b1], [cla1b2], [cla2b1], [cla2b2], self.w_fsb)
+                covij_fsb = cw_fsbfsb.gaussian_covariance(
+                    # cw_fsbfsb, 0, 0, 0, 0, 
+                    [cla1b1], [cla1b2], [cla2b1], [cla2b2], 
+                    self.w_fsb)
                 gauss_cov[n, m] = covij_fsb
                 gauss_cov[m, n] = covij_fsb.T # TODO: new transpose
 
-        gauss_cov[-1, -1] = nmt.gaussian_covariance(cw_clscls, 0, 0, 0, 0, [self.cls_11_unbinned], # /self.fsky_cls_11
+        gauss_cov[-1, -1] = cw_clscls.gaussian_covariance(
+                                                    # cw_clscls, 0, 0, 0, 0, 
+                                                    [self.cls_11_unbinned], # /self.fsky_cls_11
                                                     [self.cls_12_unbinned], [self.cls_12_unbinned], # /self.fsky_cls_12
-                                                    [self.cls_22_unbinned], self.w_cls_12) # /self.fsky_cls_22
+                                                    [self.cls_22_unbinned], 
+                                                    self.w_cls_12) # /self.fsky_cls_22
         self.cov_cross = gauss_cov
         
         # else:
         #     self.cov_cross = self.cov_cross_gauss
 
-        if n222 is True:
+        if n222:
             self.cov_cross += self.get_n222_cov(self.cls_12_unbinned, self.cls_12_unbinned, self.fsky_fsb)
-        if n32 is True: 
+        if n32: 
             temp = self.get_n32_cov(self.cls_11_unbinned, '122', self.filters, self.bins, self.fsky_fsb, self.cls_12_unbinned, '112')
             # print(temp.shape, self.cov_cross.shape)
             self.cov_cross += temp
@@ -500,12 +506,9 @@ class FSB():
         fmask_1 = nmt.NmtField(self.mask1, None, spin=0)
         fmask_2 = nmt.NmtField(self.mask2, None, spin=0)
 
-        cw_1212 = nmt.NmtCovarianceWorkspace()
-        cw_1212.compute_coupling_coefficients(fmask_1, fmask_2, fmask_1, fmask_2) # gk, gk
-        cw_1211 = nmt.NmtCovarianceWorkspace()
-        cw_1211.compute_coupling_coefficients(fmask_1, fmask_1, fmask_1, fmask_2) # gg, gk
-        cw_1111 = nmt.NmtCovarianceWorkspace()
-        cw_1111.compute_coupling_coefficients(fmask_1, fmask_1, fmask_1, fmask_1) # gg, gg
+        cw_1212 = nmt.NmtCovarianceWorkspace(fmask_1, fmask_2, fmask_1, fmask_2) # gk, gk
+        cw_1211 = nmt.NmtCovarianceWorkspace(fmask_1, fmask_1, fmask_1, fmask_2) # gg, gk
+        cw_1111 = nmt.NmtCovarianceWorkspace(fmask_1, fmask_1, fmask_1, fmask_1) # gg, gg
 
         gauss_cov_cls = np.zeros((2, 2, self.b, self.b)) 
 
@@ -515,9 +518,9 @@ class FSB():
         cls[2] = self.cls_22_unbinned #/ self.fsky_cls_22 # kk
 
         # TODO: careful: below is not the same ordering as in the master cov :/
-        gauss_cov_cls[0,0] = nmt.gaussian_covariance(cw_1111, 0, 0, 0, 0, [cls[0]], [cls[0]], [cls[0]], [cls[0]], self.w_cls_11) # gg, gg
-        gauss_cov_cls[1,1] = nmt.gaussian_covariance(cw_1212, 0, 0, 0, 0, [cls[0]], [cls[1]], [cls[1]], [cls[2]], self.w_cls_12) # gk, gk
-        gauss_cov_cls[0,1] = nmt.gaussian_covariance(cw_1211, 0, 0, 0, 0, [cls[0]], [cls[1]], [cls[0]], [cls[1]], self.w_cls_11, self.w_cls_12) # gg, gk
+        gauss_cov_cls[0,0] = cw_1111.gaussian_covariance([cls[0]], [cls[0]], [cls[0]], [cls[0]], self.w_cls_11) # gg, gg # cw_1111, 0, 0, 0, 0, 
+        gauss_cov_cls[1,1] = cw_1212.gaussian_covariance([cls[0]], [cls[1]], [cls[1]], [cls[2]], self.w_cls_12) # gk, gk # cw_1212, 0, 0, 0, 0, 
+        gauss_cov_cls[0,1] = cw_1211.gaussian_covariance([cls[0]], [cls[1]], [cls[0]], [cls[1]], self.w_cls_11, self.w_cls_12) # gg, gk # cw_1211, 0, 0, 0, 0, 
         gauss_cov_cls[1,0] = gauss_cov_cls[0,1].T # symmetric
         
         self.cov_cls = gauss_cov_cls
@@ -535,12 +538,9 @@ class FSB():
         fmask_r = nmt.NmtField(self.rmask, None, spin=0)
         fmask_1 = nmt.NmtField(self.mask1, None, spin=0)
 
-        cw_fsbfsb = nmt.NmtCovarianceWorkspace()
-        cw_fsbfsb.compute_coupling_coefficients(fmask_r, fmask_1, fmask_r, fmask_1)
-        cw_fsbcls = nmt.NmtCovarianceWorkspace()
-        cw_fsbcls.compute_coupling_coefficients(fmask_1, fmask_r, fmask_1, fmask_1)
-        cw_clscls = nmt.NmtCovarianceWorkspace()
-        cw_clscls.compute_coupling_coefficients(fmask_1, fmask_1, fmask_1, fmask_1)
+        cw_fsbfsb = nmt.NmtCovarianceWorkspace(fmask_r, fmask_1, fmask_r, fmask_1)
+        cw_fsbcls = nmt.NmtCovarianceWorkspace(fmask_1, fmask_r, fmask_1, fmask_1)
+        cw_clscls = nmt.NmtCovarianceWorkspace(fmask_1, fmask_1, fmask_1, fmask_1)
 
         gauss_cov = np.zeros((self.nbands+1, self.nbands+1, self.b, self.b)) 
 
@@ -556,7 +556,7 @@ class FSB():
                 cla1b1 = self.fsb_unbinned_pure[n] #/ self.fsky_fsb_pure
                 cla1b2 = self.fsb_unbinned_pure[n] #/ self.fsky_fsb_pure
             
-            covij_fsb = nmt.gaussian_covariance(cw_fsbcls, 0, 0, 0, 0, [cla1b1], [cla1b2], [cla2b1], [cla2b2], self.w_fsb_pure, self.w_cls_11)
+            covij_fsb = cw_fsbcls.gaussian_covariance([cla1b1], [cla1b2], [cla2b1], [cla2b2], self.w_fsb_pure, self.w_cls_11) # cw_fsbcls, 0, 0, 0, 0, 
             gauss_cov[n, -1] = covij_fsb
             gauss_cov[-1, n] = covij_fsb.T # TODO: changed
 
@@ -569,22 +569,22 @@ class FSB():
                     cla1b1 = self.cls_1sq1sq_unbinned[n,m] #/ self.fsky_cls_rr 
                     cla2b1 = self.fsb_unbinned_pure[m] #/ self.fsky_fsb_pure
 
-                covij_fsb = nmt.gaussian_covariance(cw_fsbfsb, 0, 0, 0, 0, [cla1b1], [cla1b2], [cla2b1], [cla2b2], self.w_fsb_pure)
+                covij_fsb = cw_fsbfsb.gaussian_covariance([cla1b1], [cla1b2], [cla2b1], [cla2b2], self.w_fsb_pure) # cw_fsbfsb, 0, 0, 0, 0, 
                 gauss_cov[n, m] = covij_fsb
                 gauss_cov[m, n] = covij_fsb.T # TODO: new .T, let's see if it makes things better
 
-        gauss_cov[-1, -1] = nmt.gaussian_covariance(cw_clscls, 0, 0, 0, 0, [self.cls_11_unbinned], # /self.fsky_cls_11
+        gauss_cov[-1, -1] = cw_clscls.gaussian_covariance([self.cls_11_unbinned], # /self.fsky_cls_11
                                                     [self.cls_11_unbinned], [self.cls_11_unbinned], 
-                                                    [self.cls_11_unbinned], self.w_cls_11)
+                                                    [self.cls_11_unbinned], self.w_cls_11) # cw_clscls, 0, 0, 0, 0, 
         
         self.cov_auto = gauss_cov
 
         # else:
         #     self.cov_auto = self.cov_auto_gauss
 
-        if n222 is True:
+        if n222:
             self.cov_auto += self.get_n222_cov(self.cls_11_unbinned, self.cls_11_unbinned, self.fsky_fsb_pure)
-        if n32 is True:
+        if n32:
             self.cov_auto += self.get_n32_cov(self.cls_11_unbinned, '111', self.filters, self.bins, self.fsky_fsb_pure) 
         
         if insquares==False:
@@ -602,12 +602,9 @@ class FSB():
         fmask_1 = nmt.NmtField(self.mask1, None, spin=0)
         fmask_2 = nmt.NmtField(self.mask2, None, spin=0)
 
-        cw_ggkggg = nmt.NmtCovarianceWorkspace()
-        cw_ggkggg.compute_coupling_coefficients(fmask_r, fmask_2, fmask_r, fmask_1)
-        cw_ggkgg = nmt.NmtCovarianceWorkspace()
-        cw_ggkgg.compute_coupling_coefficients(fmask_r, fmask_2, fmask_1, fmask_1)
-        cw_ggggk = nmt.NmtCovarianceWorkspace()
-        cw_ggggk.compute_coupling_coefficients(fmask_r, fmask_1, fmask_1, fmask_2)
+        cw_ggkggg = nmt.NmtCovarianceWorkspace(fmask_r, fmask_2, fmask_r, fmask_1)
+        cw_ggkgg = nmt.NmtCovarianceWorkspace(fmask_r, fmask_2, fmask_1, fmask_1)
+        cw_ggggk = nmt.NmtCovarianceWorkspace(fmask_r, fmask_1, fmask_1, fmask_2)
 
         # structure of data vector if fsb_ggk + cl_gk + fsb_ggg + cl_gg
         master_cov = np.zeros((2*(self.nbands+1), 2*(self.nbands+1), self.b, self.b)) 
@@ -642,10 +639,10 @@ class FSB():
                 cla2b2 = fsbs_cls_mixed[-1]
 
             # ggg, gk (along axis 1, horizontal)
-            covij_fsb = nmt.gaussian_covariance(cw_ggggk, 0, 0, 0, 0, [cla1b1], [cla1b2], [cla2b1], [cla2b2], self.w_fsb_pure, self.w_cls_12)
+            covij_fsb = cw_ggggk.gaussian_covariance([cla1b1], [cla1b2], [cla2b1], [cla2b2], self.w_fsb_pure, self.w_cls_12) # cw_ggggk, 0, 0, 0, 0, 
             master_cov[2*(self.nbands+1)-1, n] = covij_fsb
             # ggk, gg (along axis 0, vertical)
-            covij_fsb = nmt.gaussian_covariance(cw_ggkgg, 0, 0, 0, 0, [cla1b1], [cla1b1], [cla2b2], [cla2b2], self.w_fsb, self.w_cls_11)
+            covij_fsb = cw_ggkgg.gaussian_covariance([cla1b1], [cla1b1], [cla2b2], [cla2b2], self.w_fsb, self.w_cls_11) # cw_ggkgg, 0, 0, 0, 0, 
             master_cov[(self.nbands+1) + n, (self.nbands)] = covij_fsb
 
             for m in range(self.nbands):
@@ -660,13 +657,13 @@ class FSB():
                     cla2b1 = fsbs_cls_mixed[m]
                     # cla2b2 = fsbs_cls_mixed[-1] # same as above
     
-                covij_fsb = nmt.gaussian_covariance(cw_ggkggg, 0, 0, 0, 0, [cla1b1], [cla1b2], [cla2b1], [cla2b2], self.w_fsb)
+                covij_fsb = cw_ggkggg.gaussian_covariance([cla1b1], [cla1b2], [cla2b1], [cla2b2], self.w_fsb) # cw_ggkggg, 0, 0, 0, 0, 
                 master_cov[(self.nbands+1) + n, m] = covij_fsb
                 # master_cov[m, (self.nbands+1) + n] = covij_fsb # NO! not symmetric bcs Phi_ggg and Phi_ggk
 
-        if n222 is True:
+        if n222:
             master_cov[self.nbands+1:, :self.nbands+1] += self.get_n222_cov(self.cls_11_unbinned, self.cls_12_unbinned, self.fsky_cls_11)
-        if n32 is True:
+        if n32:
             # compute ggg x gk first
             master_cov[self.nbands+1:, :self.nbands+1] += self.get_n32_cov(self.cls_11_unbinned, '112', self.filters, self.bins, self.fsky_fsb_pure, self.cls_12_unbinned, '111', symmetric=False)
             # then ggk x gg
@@ -876,7 +873,7 @@ class FSB():
             
         n32 = 2* n32_term / ( np.array([(2*self.bb.get_effective_ells()+1)]).T )
 
-        if symmetric is True:
+        if symmetric:
             for i in range(self.nbands): # make it symmetric
                 n32[i, self.nbands] = n32[self.nbands, i].T
 
@@ -902,12 +899,12 @@ class FSB():
 
     #     cl_out = self.cls_12_unbinned #/self.fsky_cls_12
 
-    #     if n32 is True:
+    #     if n32:
     #         self.full_cov_large = self.gauss_cov + self.get_n222_cov(cl_out, cl_out, self.fsky_cls_12) + self.get_n32_cov(self.filters, self.bins)
     #     else: # bypass n32 altogether if not needed
     #         self.full_cov_large = self.gauss_cov + self.get_n222_cov(cl_out, cl_out, self.fsky_cls_12)
         
-    #     if insquares is True:
+    #     if insquares:
     #         return self.full_cov_large
     #     else:
     #         return _reduce2(self.full_cov_large)
