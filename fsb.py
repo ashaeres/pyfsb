@@ -3,9 +3,7 @@
 '''Pymaster extension for Filtered Square Bispectra (FSB)
 
 NB: this is the version where 
-- we take the bispectrum of fields aab ie the field showing up in the 
-power spectrum, is different from the fields that were filtered and squared.
-- we also do Not enforce binary masks anymore. nor do we enforce mask intersections.
+- we make it an option to take the FSB of different filters.
 
 
 Functions
@@ -64,6 +62,9 @@ import numpy as np
 import healpy as hp 
 
 
+print("this is the filters branch")
+
+
 def _reduce2(bigm):
     """
     Reduces the dimensionality of an array by 2 along its first two axes.
@@ -112,7 +113,11 @@ def get_filters(nbands, nside):
 
 class FSB():
 
-    def __init__(self, map1, mask1, filters, map2=None, mask2=None, ells_per_bin=10, niter=3): # , rmask=None
+    def __init__(self, map1, mask1, 
+                 filters, filter_combinations = None,
+                 map2=None, mask2=None, 
+                 ells_per_bin=10, 
+                 niter=3): # , rmask=None
 
         self.niter = niter
 
@@ -147,8 +152,24 @@ class FSB():
         # filters
         self.filters = filters
         self.nbands = len(self.filters)
+        # filter combination
+        if filter_combinations is None:
+            # default can be just the diagonal
+            self.filter_combinations = np.identity(len(self.filters))
+            # or can be the upper triangle, idk
+        else:
+            self.filter_combinations = filter_combinations
+        self.filter_combinations = self.filter_combinations.astype(bool)
+        # making some indices to keep track of the flattened version
+        self.filt_i = []; self.filt_j = []
+        for i in range(len(self.filters)):
+            for j in range(len(self.filters)):
+                if self.filter_combinations[i,j]:
+                    self.filt1.append(i)
+                    self.filt2.append(j)
 
-        # binning # TODO: relabel those to make them more explicit
+
+        # binning
         self.ells_per_bin = ells_per_bin
         self.lmax = 3*self.nside-1
         self.bb = nmt.NmtBin.from_lmax_linear(self.lmax, self.ells_per_bin)
@@ -291,8 +312,6 @@ class FSB():
 
         return w12 
 
-
-
     def filtered_sq_fields(self):
 
         """
@@ -304,19 +323,25 @@ class FSB():
         there are filters.
         
         """ 
-        # # already done up there i believe
-        # mask1_bin = self.effmask>0   
-        # map1 = self.map1*mask1_bin  
 
         alm1 = hp.map2alm(self.map1, iter=self.niter)
-        
-        mp_filt_sq = np.array([hp.alm2map(hp.almxfl(alm1, fl), self.nside, lmax=self.lmax)**2 for fl in self.filters])  
 
-        # # FIXME: sara's fix (potentially affects covariance)
-        # # print(np.mean(mp_filt_sq, axis=1))
-        # mp_filt_sq = np.array([(mp_filt_sq[i]-np.average(mp_filt_sq[i], weights=self.rmask))*self.rmask for i in range(len(mp_filt_sq))]) 
-        
-        f1sq = [nmt.NmtField(self.rmask, [m], masked_on_input=False, n_iter=self.niter) for m in mp_filt_sq] 
+        # mp_filt_sq = np.empty_like(self.filter_combinations, dtype=None)
+        # f1sq = np.empty_like(self.filter_combinations, dtype=None)
+        f1sq = []
+
+        for i in range(len(self.filters)):
+
+            for j in range(len(self.filters)):
+
+                if self.filter_combinations[i,j]:
+
+                    mi = hp.alm2map(hp.almxfl(alm1, self.filters[i]), self.nside, lmax=self.lmax)
+                    mj = hp.alm2map(hp.almxfl(alm1, self.filters[j]), self.nside, lmax=self.lmax)
+                    f1sq.append(nmt.NmtField(self.rmask, [mi * mj], masked_on_input=False, n_iter=self.niter))
+                    # f1sq[i,j] = nmt.NmtField(self.rmask, [mi * mj], masked_on_input=False, n_iter=self.niter)
+                    # mp_filt_sq[i,j] = mi * mj
+                    # mp_filt_sq[j,i] = mp_filt_sq[i,j] # TODO: why not
         
         return np.array(f1sq)
     
@@ -359,6 +384,8 @@ class FSB():
         else:
             same = False
 
+
+
         if field1.shape[0]>1: # several fields as input
 
             if wksp is None: # cross power spectra, unbinned
@@ -389,6 +416,8 @@ class FSB():
                     
             return claa.squeeze() 
         
+
+
         else: # one field as input, inside a np.array
 
             if wksp is None: # auto power spectra, unbinned
@@ -880,36 +909,5 @@ class FSB():
         return n32 / fskycorrection
     
     
-
-    # def get_full_cov(self, insquares=False, n32=True):
-
-    #     """
-    #     Adds the mask-corrected, binned gaussian-
-    #     limit covariance and its main mask-corrected, 
-    #     binned non-gaussian contributions. 
-
-    #     Returns
-    #     ----------
-    #     An array of dimensions ((nbands+1)*nbins, (nbands+1)*nbins),
-    #     or if insquares set to True, an array of dimensions 
-    #     ((nbands+1), (nbands+1), nbins, nbins).
-    #     """
-    #     # if self.gauss_cov is None:
-    #     #     self.gauss_cov = self.get_gauss_cov()
-
-    #     cl_out = self.cls_12_unbinned #/self.fsky_cls_12
-
-    #     if n32:
-    #         self.full_cov_large = self.gauss_cov + self.get_n222_cov(cl_out, cl_out, self.fsky_cls_12) + self.get_n32_cov(self.filters, self.bins)
-    #     else: # bypass n32 altogether if not needed
-    #         self.full_cov_large = self.gauss_cov + self.get_n222_cov(cl_out, cl_out, self.fsky_cls_12)
-        
-    #     if insquares:
-    #         return self.full_cov_large
-    #     else:
-    #         return _reduce2(self.full_cov_large)
-
-
-
 
 
