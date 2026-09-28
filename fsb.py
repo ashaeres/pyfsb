@@ -32,8 +32,8 @@ FSB
     cls_1F1Bx2 
     gauss_cov
     cls_1sq1sq_unbinned 
-    fsb_unbinned_pure 
-    fsb_binned_pure 
+    fsb_unbinned_auto 
+    fsb_binned_auto 
     cls_11_binned
     master_datavector
     cls_datavector
@@ -43,7 +43,7 @@ FSB
     get_fsb
     get_gauss_cov
     get_gauss_cov_cls
-    get_gauss_cov_pure
+    get_gauss_cov_auto
     get_master_gauss_cov
     _get_n222_term
     ined earlier
@@ -159,14 +159,15 @@ class FSB():
             # or can be the upper triangle, idk
         else:
             self.filter_combinations = filter_combinations
+        self.ncombi = np.sum(self.filter_combinations).astype(int) 
         self.filter_combinations = self.filter_combinations.astype(bool)
         # making some indices to keep track of the flattened version
         self.filt_i = []; self.filt_j = []
         for i in range(len(self.filters)):
             for j in range(len(self.filters)):
                 if self.filter_combinations[i,j]:
-                    self.filt1.append(i)
-                    self.filt2.append(j)
+                    self.filt_i.append(i)
+                    self.filt_j.append(j)
 
 
         # binning
@@ -185,8 +186,8 @@ class FSB():
         self.w_fsb = self.return_wkspace(self.rmask, self.mask2, self.ells_per_bin)
         self.fsky_fsb = np.mean(self.rmask*self.mask2)
 
-        self.w_fsb_pure = self.return_wkspace(self.rmask, self.mask1, self.ells_per_bin)
-        self.fsky_fsb_pure = np.mean(self.rmask*self.mask1)
+        self.w_fsb_auto = self.return_wkspace(self.rmask, self.mask1, self.ells_per_bin)
+        self.fsky_fsb_auto = np.mean(self.rmask*self.mask1)
         
         self.w_cls_11 = self.return_wkspace(self.mask1, self.mask1, self.ells_per_bin)
         self.fsky_cls_11 = np.mean(self.mask1*self.mask1)
@@ -228,12 +229,12 @@ class FSB():
         return self.get_fsb(wksp=self.w_fsb)
 
     @cached_property
-    def fsb_unbinned_pure(self): 
-        return self.get_cls_field(self.f1s, field2=np.array([self.field1])) / self.fsky_fsb_pure
+    def fsb_unbinned_auto(self): 
+        return self.get_cls_field(self.f1s, field2=np.array([self.field1])) / self.fsky_fsb_auto
     
     @cached_property
-    def fsb_binned_pure(self): 
-        return self.get_cls_field(self.f1s, field2=np.array([self.field1]), wksp=self.w_fsb_pure) 
+    def fsb_binned_auto(self): 
+        return self.get_cls_field(self.f1s, field2=np.array([self.field1]), wksp=self.w_fsb_auto) 
     
     @cached_property
     def cls_11_unbinned(self):
@@ -245,28 +246,35 @@ class FSB():
     
     @cached_property
     def cls_12_unbinned(self): 
-        return self.get_cls_field(np.array([self.field1]), field2=np.array([self.field2])) / self.fsky_cls_12
+        if self.twofields:
+            return self.get_cls_field(np.array([self.field1]), field2=np.array([self.field2])) / self.fsky_cls_12
+        else:
+            return self.cls_11_unbinned
     
     @cached_property
     def cls_12_binned(self):
-        return self.get_cls_field(np.array([self.field1]), field2=np.array([self.field2]), wksp=self.w_cls_12)
+        if self.twofields:
+            return self.get_cls_field(np.array([self.field1]), field2=np.array([self.field2]), wksp=self.w_cls_12)
+        else:
+            return self.cls_11_binned
 
     @cached_property
     def cls_22_unbinned(self):
-        return self.get_cls_field(np.array([self.field2])) / self.fsky_cls_22
+        if self.twofields:
+            return self.get_cls_field(np.array([self.field2])) / self.fsky_cls_22
+        else:
+            return self.cls_11_unbinned 
     
-    @cached_property
-    def datavector(self):
-        return np.concatenate((self.fsb_binned.flatten(), self.cls_12_binned))
+    # @cached_property # in case you want to change it! otherwise it becomes a numpy array
+    def datavector(self, fsb_auto=False, fsb_cross=True, cl_auto = False, cl_cross = True):
+        components = [self.fsb_binned_auto.flatten(), self.fsb_binned.flatten(), self.cls_11_binned.flatten(), self.cls_12_binned.flatten()]
+        if self.twofields:
+            flags = [fsb_auto, fsb_cross, cl_auto, cl_cross]
+        else:
+            flags = [False, fsb_cross, False, cl_cross]
+        components = tuple([d for d, m in zip(components, flags) if m])
+        return np.concatenate((components))
 
-    @cached_property
-    def cls_datavector(self):
-        return np.concatenate((self.cls_11_binned, self.cls_12_binned))
-
-    @cached_property
-    def master_datavector(self):
-        return np.concatenate((self.fsb_binned_pure.flatten(), self.cls_11_binned, self.fsb_binned.flatten(), self.cls_12_binned))
-    
     @cached_property
     def cov_cls(self):
         return self.get_cov_cls()
@@ -345,8 +353,6 @@ class FSB():
         
         return np.array(f1sq)
     
-    
-
     def get_cls_field(self, field1, field2=None, wksp=None):
 
         """
@@ -428,8 +434,6 @@ class FSB():
 
             return clbb
 
-
-
     def get_fsb(self, wksp=None):
 
         """
@@ -455,6 +459,25 @@ class FSB():
         return self.get_cls_field(self.f1s, field2=np.array([self.field2]), wksp=wksp) 
         
 
+
+
+    def get_cov(self, fsb_auto=False, fsb_cross=True, cl_auto = False, cl_cross = True, n222=True, n32=False):
+
+        # find out the size?
+
+
+        # make one massive datavector of the inputs? eg for each block, you need 4 arrays of inputs
+
+        # then just loop over it
+
+
+        return None 
+
+
+
+
+
+        
     def get_cov_cross(self, n222=True, n32=False, insquares=True):
 
         # if hasattr(self, 'cov_cross_gauss') is False:
@@ -467,19 +490,23 @@ class FSB():
         cw_fsbcls = nmt.NmtCovarianceWorkspace(fmask_r, fmask_2, fmask_1, fmask_2)
         cw_clscls = nmt.NmtCovarianceWorkspace(fmask_1, fmask_2, fmask_1, fmask_2)
 
-        gauss_cov = np.zeros((self.nbands+1, self.nbands+1, self.b, self.b)) 
+        
+        
+        gauss_cov = np.zeros((self.ncombi+1, self.ncombi+1, self.b, self.b)) 
+        # gauss_cov = np.zeros((self.nbands+1, self.nbands+1, self.b, self.b)) 
 
-        for n in range(self.nbands):
+        for n in range(self.ncombi):
+        # for n in range(self.nbands): 
 
             # this is for the fsb-cls cross covariance
             cla2b1 = self.cls_12_unbinned #/ self.fsky_cls_12
             cla2b2 = self.cls_22_unbinned #/ self.fsky_cls_22
 
-            if self.nbands==1:
-                cla1b1 = self.fsb_unbinned_pure #/ self.fsky_fsb_pure
+            if self.ncombi==1:
+                cla1b1 = self.fsb_unbinned_auto #/ self.fsky_fsb_auto
                 cla1b2 = self.fsb_unbinned #/ self.fsky_fsb 
             else:
-                cla1b1 = self.fsb_unbinned_pure[n] #/ self.fsky_fsb_pure
+                cla1b1 = self.fsb_unbinned_auto[n] #/ self.fsky_fsb_auto
                 cla1b2 = self.fsb_unbinned[n] #/ self.fsky_fsb 
             
             covij_fsb = cw_fsbcls.gaussian_covariance(
@@ -489,11 +516,12 @@ class FSB():
             gauss_cov[n, -1] = covij_fsb
             gauss_cov[-1, n] = covij_fsb.T # TODO: changed
 
-            for m in range(n, self.nbands):
+            for m in range(n, self.ncombi):
+            # for m in range(n, self.nbands):
 
                 # this is for the fsb-fsb covariance
 
-                if self.nbands==1:
+                if self.ncombi==1:
                     cla1b1 = self.cls_1sq1sq_unbinned #/ self.fsky_cls_rr
                     cla1b2 = self.fsb_unbinned #/ self.fsky_fsb 
                 else:
@@ -571,34 +599,34 @@ class FSB():
         cw_fsbcls = nmt.NmtCovarianceWorkspace(fmask_1, fmask_r, fmask_1, fmask_1)
         cw_clscls = nmt.NmtCovarianceWorkspace(fmask_1, fmask_1, fmask_1, fmask_1)
 
-        gauss_cov = np.zeros((self.nbands+1, self.nbands+1, self.b, self.b)) 
+        gauss_cov = np.zeros((self.ncombi+1, self.ncombi+1, self.b, self.b)) 
 
-        for n in range(self.nbands):
+        for n in range(self.ncombi):
 
             cla2b1 = self.cls_11_unbinned #/ self.fsky_cls_11
             cla2b2 = self.cls_11_unbinned #/ self.fsky_cls_11
 
-            if self.nbands==1:
-                cla1b1 = self.fsb_unbinned_pure #/ self.fsky_fsb_pure
-                cla1b2 = self.fsb_unbinned_pure #/ self.fsky_fsb_pure
+            if self.ncombi==1:
+                cla1b1 = self.fsb_unbinned_auto #/ self.fsky_fsb_auto
+                cla1b2 = self.fsb_unbinned_auto #/ self.fsky_fsb_auto
             else:
-                cla1b1 = self.fsb_unbinned_pure[n] #/ self.fsky_fsb_pure
-                cla1b2 = self.fsb_unbinned_pure[n] #/ self.fsky_fsb_pure
+                cla1b1 = self.fsb_unbinned_auto[n] #/ self.fsky_fsb_auto
+                cla1b2 = self.fsb_unbinned_auto[n] #/ self.fsky_fsb_auto
             
-            covij_fsb = cw_fsbcls.gaussian_covariance([cla1b1], [cla1b2], [cla2b1], [cla2b2], self.w_fsb_pure, self.w_cls_11) # cw_fsbcls, 0, 0, 0, 0, 
+            covij_fsb = cw_fsbcls.gaussian_covariance([cla1b1], [cla1b2], [cla2b1], [cla2b2], self.w_fsb_auto, self.w_cls_11) # cw_fsbcls, 0, 0, 0, 0, 
             gauss_cov[n, -1] = covij_fsb
             gauss_cov[-1, n] = covij_fsb.T # TODO: changed
 
-            for m in range(n, self.nbands):
+            for m in range(n, self.ncombi):
 
-                if self.nbands==1:
+                if self.ncombi==1:
                     cla1b1 = self.cls_1sq1sq_unbinned #/ self.fsky_cls_rr 
-                    cla2b1 = self.fsb_unbinned_pure #/ self.fsky_fsb_pure
+                    cla2b1 = self.fsb_unbinned_auto #/ self.fsky_fsb_auto
                 else:
                     cla1b1 = self.cls_1sq1sq_unbinned[n,m] #/ self.fsky_cls_rr 
-                    cla2b1 = self.fsb_unbinned_pure[m] #/ self.fsky_fsb_pure
+                    cla2b1 = self.fsb_unbinned_auto[m] #/ self.fsky_fsb_auto
 
-                covij_fsb = cw_fsbfsb.gaussian_covariance([cla1b1], [cla1b2], [cla2b1], [cla2b2], self.w_fsb_pure) # cw_fsbfsb, 0, 0, 0, 0, 
+                covij_fsb = cw_fsbfsb.gaussian_covariance([cla1b1], [cla1b2], [cla2b1], [cla2b2], self.w_fsb_auto) # cw_fsbfsb, 0, 0, 0, 0, 
                 gauss_cov[n, m] = covij_fsb
                 gauss_cov[m, n] = covij_fsb.T # TODO: new .T, let's see if it makes things better
 
@@ -612,9 +640,9 @@ class FSB():
         #     self.cov_auto = self.cov_auto_gauss
 
         if n222:
-            self.cov_auto += self.get_n222_cov(self.cls_11_unbinned, self.cls_11_unbinned, self.fsky_fsb_pure)
+            self.cov_auto += self.get_n222_cov(self.cls_11_unbinned, self.cls_11_unbinned, self.fsky_fsb_auto)
         if n32:
-            self.cov_auto += self.get_n32_cov(self.cls_11_unbinned, '111', self.filters, self.bins, self.fsky_fsb_pure) 
+            self.cov_auto += self.get_n32_cov(self.cls_11_unbinned, '111', self.filters, self.bins, self.fsky_fsb_auto) 
         
         if insquares==False:
             return _reduce2(self.cov_auto)
@@ -622,11 +650,10 @@ class FSB():
             return self.cov_auto
         
 
-
     def get_cov_all(self, n222=True, n32=False, insquares=True):
 
         """TODO: add description of shape of matrix"""
-
+ 
         fmask_r = nmt.NmtField(self.rmask, None, spin=0)
         fmask_1 = nmt.NmtField(self.mask1, None, spin=0)
         fmask_2 = nmt.NmtField(self.mask2, None, spin=0)
@@ -636,73 +663,73 @@ class FSB():
         cw_ggggk = nmt.NmtCovarianceWorkspace(fmask_r, fmask_1, fmask_1, fmask_2)
 
         # structure of data vector if fsb_ggk + cl_gk + fsb_ggg + cl_gg
-        master_cov = np.zeros((2*(self.nbands+1), 2*(self.nbands+1), self.b, self.b)) 
+        master_cov = np.zeros((2*(self.ncombi+1), 2*(self.ncombi+1), self.b, self.b)) 
         
         oldggg = self.get_cov_auto(n222=n222, n32=n32) 
         oldggk = self.get_cov_cross(n222=n222, n32=n32) 
         oldcls = self.cov_cls
-        master_cov[self.nbands+1:, self.nbands+1:] = oldggk
-        master_cov[:self.nbands+1, :self.nbands+1] = oldggg
-        master_cov[self.nbands, -1] = oldcls[0,1] # gg, gk
-        master_cov[-1, self.nbands] = oldcls[1,0] # gk, gg # one of them will be overwritten by transpose bit, but not sure which one
+        master_cov[self.ncombi+1:, self.ncombi+1:] = oldggk
+        master_cov[:self.ncombi+1, :self.ncombi+1] = oldggg
+        master_cov[self.ncombi, -1] = oldcls[0,1] # gg, gk
+        master_cov[-1, self.ncombi] = oldcls[1,0] # gk, gg # one of them will be overwritten by transpose bit, but not sure which one
 
-        # now we need master_cov[self.nbands+1:, :self.nbands+1]
-        fsbs_cls_mixed = np.zeros((self.nbands+1, len(self.cls_11_unbinned)))
-        fsbs_cls_mixed[:self.nbands] = self.fsb_unbinned #/ self.fsky_fsb
+        # now we need master_cov[self.ncombi+1:, :self.ncombi+1]
+        fsbs_cls_mixed = np.zeros((self.ncombi+1, len(self.cls_11_unbinned)))
+        fsbs_cls_mixed[:self.ncombi] = self.fsb_unbinned #/ self.fsky_fsb
         fsbs_cls_mixed[-1] = self.cls_12_unbinned #/ self.fsky_cls_12
-        fsbs_cls_pure = np.zeros_like(fsbs_cls_mixed)
-        fsbs_cls_pure[:self.nbands] = self.fsb_unbinned_pure #/ self.fsky_fsb_pure
-        fsbs_cls_pure[-1] = self.cls_11_unbinned #/ self.fsky_cls_11
+        fsbs_cls_auto = np.zeros_like(fsbs_cls_mixed)
+        fsbs_cls_auto[:self.ncombi] = self.fsb_unbinned_auto #/ self.fsky_fsb_auto
+        fsbs_cls_auto[-1] = self.cls_11_unbinned #/ self.fsky_cls_11
 
-        for n in range(self.nbands):
+        for n in range(self.ncombi):
 
-            if self.nbands==1:
-                cla1b1 = fsbs_cls_pure[0]
-                cla1b2 = fsbs_cls_pure[-1]
+            if self.ncombi==1:
+                cla1b1 = fsbs_cls_auto[0]
+                cla1b2 = fsbs_cls_auto[-1]
                 cla2b1 = fsbs_cls_mixed[0]
                 cla2b2 = fsbs_cls_mixed[-1]
             else:
-                cla1b1 = fsbs_cls_pure[n] # for both cases
-                cla1b2 = fsbs_cls_pure[-1]
+                cla1b1 = fsbs_cls_auto[n] # for both cases
+                cla1b2 = fsbs_cls_auto[-1]
                 cla2b1 = fsbs_cls_mixed[n]
                 cla2b2 = fsbs_cls_mixed[-1]
 
             # ggg, gk (along axis 1, horizontal)
-            covij_fsb = cw_ggggk.gaussian_covariance([cla1b1], [cla1b2], [cla2b1], [cla2b2], self.w_fsb_pure, self.w_cls_12) # cw_ggggk, 0, 0, 0, 0, 
-            master_cov[2*(self.nbands+1)-1, n] = covij_fsb
+            covij_fsb = cw_ggggk.gaussian_covariance([cla1b1], [cla1b2], [cla2b1], [cla2b2], self.w_fsb_auto, self.w_cls_12) # cw_ggggk, 0, 0, 0, 0, 
+            master_cov[2*(self.ncombi+1)-1, n] = covij_fsb
             # ggk, gg (along axis 0, vertical)
             covij_fsb = cw_ggkgg.gaussian_covariance([cla1b1], [cla1b1], [cla2b2], [cla2b2], self.w_fsb, self.w_cls_11) # cw_ggkgg, 0, 0, 0, 0, 
-            master_cov[(self.nbands+1) + n, (self.nbands)] = covij_fsb
+            master_cov[(self.ncombi+1) + n, (self.ncombi)] = covij_fsb
 
-            for m in range(self.nbands):
+            for m in range(self.ncombi):
 
-                if self.nbands==1:
+                if self.ncombi==1:
                     cla1b1 = self.cls_1sq1sq_unbinned #/ self.fsky_cls_rr
-                    cla1b2 = fsbs_cls_pure[0]
+                    cla1b2 = fsbs_cls_auto[0]
                     cla2b1 = fsbs_cls_mixed[0]
                 else:
                     cla1b1 = self.cls_1sq1sq_unbinned[n,m] #/ self.fsky_cls_rr
-                    cla1b2 = fsbs_cls_pure[n]
+                    cla1b2 = fsbs_cls_auto[n]
                     cla2b1 = fsbs_cls_mixed[m]
                     # cla2b2 = fsbs_cls_mixed[-1] # same as above
     
                 covij_fsb = cw_ggkggg.gaussian_covariance([cla1b1], [cla1b2], [cla2b1], [cla2b2], self.w_fsb) # cw_ggkggg, 0, 0, 0, 0, 
-                master_cov[(self.nbands+1) + n, m] = covij_fsb
-                # master_cov[m, (self.nbands+1) + n] = covij_fsb # NO! not symmetric bcs Phi_ggg and Phi_ggk
+                master_cov[(self.ncombi+1) + n, m] = covij_fsb
+                # master_cov[m, (self.ncombi+1) + n] = covij_fsb # NO! not symmetric bcs Phi_ggg and Phi_ggk
 
         if n222:
-            master_cov[self.nbands+1:, :self.nbands+1] += self.get_n222_cov(self.cls_11_unbinned, self.cls_12_unbinned, self.fsky_cls_11)
+            master_cov[self.ncombi+1:, :self.ncombi+1] += self.get_n222_cov(self.cls_11_unbinned, self.cls_12_unbinned, self.fsky_cls_11)
         if n32:
             # compute ggg x gk first
-            master_cov[self.nbands+1:, :self.nbands+1] += self.get_n32_cov(self.cls_11_unbinned, '112', self.filters, self.bins, self.fsky_fsb_pure, self.cls_12_unbinned, '111', symmetric=False)
+            master_cov[self.ncombi+1:, :self.ncombi+1] += self.get_n32_cov(self.cls_11_unbinned, '112', self.filters, self.bins, self.fsky_fsb_auto, self.cls_12_unbinned, '111', symmetric=False)
             # then ggk x gg
-            temp = self.get_n32_cov(self.cls_11_unbinned, '112', self.filters, self.bins, self.fsky_fsb_pure, symmetric=False) # TODO: can make this faster by saving cl-genfsb combinations?
+            temp = self.get_n32_cov(self.cls_11_unbinned, '112', self.filters, self.bins, self.fsky_fsb_auto, symmetric=False) # TODO: can make this faster by saving cl-genfsb combinations?
             # and transpose that one
             temp_t = np.transpose(temp, (1, 0, 3, 2))
-            master_cov[self.nbands+1:, :self.nbands+1] += temp_t
+            master_cov[self.ncombi+1:, :self.ncombi+1] += temp_t
                     
-        transposed = np.transpose(master_cov[self.nbands+1:, :self.nbands+1], (1, 0, 3, 2)) # used to be (1, 0, 3, 2)
-        master_cov[:self.nbands+1, self.nbands+1:] = transposed 
+        transposed = np.transpose(master_cov[self.ncombi+1:, :self.ncombi+1], (1, 0, 3, 2)) # used to be (1, 0, 3, 2)
+        master_cov[:self.ncombi+1, self.ncombi+1:] = transposed 
 
         self.master_cov = master_cov
 
@@ -710,6 +737,8 @@ class FSB():
             return _reduce2(self.master_cov)
         else:
             return self.master_cov
+
+
 
 
 
@@ -771,6 +800,8 @@ class FSB():
         return n222 / fskycorrection
 
 
+
+
     def _get_general_fsb(self, id, m1, m2, m3, filters1, filters2): 
 
         """
@@ -820,8 +851,6 @@ class FSB():
 
         self._genfsbs[id] = genfsb
 
-
-
     def twonickels(self, cls, genfsb, filters1, filters2):
         """binning and multiplying the arguments
         if i had a nickel everytime this function was used, 
@@ -845,8 +874,6 @@ class FSB():
         cl_filter[len(filters1), :len(filters1)] = deux
 
         return cl_filter*fsb_gen
-
-
 
     def get_n32_cov(self, cls1, id1, filters1, filters2, fskycorrection, cls2=None, id2=None, symmetric=True):
 
