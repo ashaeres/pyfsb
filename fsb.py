@@ -112,7 +112,7 @@ def get_filters(nbands, nside):
 
 class FSB():
 
-    def __init__(self, map1, mask1, filters, map2=None, mask2=None, ells_per_bin=10, niter=3): # , rmask=None
+    def __init__(self, map1, mask1, filters, map2=None, mask2=None, ells_per_bin=10, niter=3, moi=False): # , rmask=None
 
         self.niter = niter
 
@@ -141,8 +141,9 @@ class FSB():
         self.rmask = self.mask1 > 0 # binary version of mask1
         self.rmask2 = self.mask2 > 0 # binary version of mask2 (used in generalised FSB)
         # remasking fields appropriately + need to make sure fields within new mask is 0
-        self.map1 = (self.map1-np.mean(self.map1[self.mask1==1]))
-        self.map2 = (self.map2-np.mean(self.map2[self.mask2==1]))
+        # not sure we should have these actually... 
+        # self.map1 = (self.map1-np.mean(self.map1[self.mask1!=0])) # fixed: now works for non-bin masks
+        # self.map2 = (self.map2-np.mean(self.map2[self.mask2!=0])) # fixed: now works for non-bin masks
 
         # filters
         self.filters = filters
@@ -180,11 +181,11 @@ class FSB():
         self.fsky_cls_rr = np.mean(self.rmask*self.rmask)
 
         # fields
-        self.field1 = nmt.NmtField(self.mask1, [self.map1], masked_on_input=False, n_iter=self.niter)
+        self.field1 = nmt.NmtField(self.mask1, [self.map1], masked_on_input=moi, n_iter=self.niter) # TODO: check what moi does for non-bin masks
         if map2 is None:
             self.field2 = self.field1
         else:
-            self.field2 = nmt.NmtField(self.mask2, [self.map2], masked_on_input=False, n_iter=self.niter)
+            self.field2 = nmt.NmtField(self.mask2, [self.map2], masked_on_input=moi, n_iter=self.niter) # TODO: check what moi does for non-bin masks
 
         # self.cls_1F1Bx2 = None # TODO: make default usage with self.filters and self.binfilters
         self._genfsbs = {}
