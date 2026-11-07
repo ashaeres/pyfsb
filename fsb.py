@@ -82,7 +82,7 @@ def _reduce2(bigm):
     return minus2
 
 
-def get_filters(nbands, nside):
+def get_filters(nbands, nside, nmtbin=None):
     """
     Linearly divides the ell range (2; 3*nside-1)
     into nbands filters of equal size.
@@ -93,28 +93,70 @@ def get_filters(nbands, nside):
         number of filters
     nside : int
         resolution of the healpy map used
+    nmtbin: NmtBin object
+        if given a nmtbin object, will give filters corresponding to each bandpower
 
     Returns
     ----------
     A binary array of shape (nbands, 3*nside)
     
     """
-    start=2
-    nell = (3*nside-1) - start
-    dell = nell//nbands
-    fls = np.zeros([nbands, 3*nside]) 
-    for i in range(nbands):
-        fls[i, i*dell+start:(i+1)*dell+start] = 1.0
+
+    if nmtbin is None:
+        start=2
+        nell = (3*nside-1) - start
+        dell = nell//nbands
+        fls = np.zeros([nbands, 3*nside]) 
+        for i in range(nbands):
+            fls[i, i*dell+start:(i+1)*dell+start] = 1.0
+
+    else: 
+        nbands = nmtbin.get_n_bands()
+        fls = np.zeros([nbands, nmtbin.lmax])
+        for i in range(nbands-1):
+            fls[i, nmtbin.get_ell_list(i)] = 1.0
+        
     return fls
+
 
 
 
 
 class FSB():
 
-    def __init__(self, map1, mask1, filters, map2=None, mask2=None, ells_per_bin=10, niter=3, moi=False): # , rmask=None
+    def __init__(self, 
+                map1, mask1, 
+                filters, 
+                map2=None, mask2=None, 
+                w_fsb=None, w_fsb_pure=None, 
+                # w_cls_11=None, w_cls_12=None, w_cls_22=None, 
+                w_fsb_linterm=None,
+                nmtbin = None,
+                ells_per_bin=10, # only used if nmtbin is None
+                niter=3, moi=False): # , rmask=None
 
         self.niter = niter
+
+        # filters
+        self.filters = filters
+        self.nbands = len(self.filters)
+
+        # binning # TODO: relabel those to make them more explicit
+        if nmtbin is None:
+            self.lmax = 3*self.nside-1
+            self.bb = nmt.NmtBin.from_lmax_linear(self.lmax, ells_per_bin)
+        else:
+            self.bb = nmtbin
+            self.lmax = nmtbin.lmax
+        
+        self.b = self.bb.get_n_bands() # len(self.bb.get_effective_ells())
+        self.bins = get_filters(None, None, self.bb) # get_filters(self.b, self.nside) # filters corresponding to bins (for generalized fsb)
+        # this is specifically for n222 calculation
+        self._ls = np.arange(self.lmax+1)
+        self._bin_n222 = nmt.NmtBin.from_lmax_linear(self.lmax, 1)
+        self._beam = np.ones(self.lmax+1)
+
+
 
         # maps and masks
         self.map1 = map1
@@ -126,6 +168,9 @@ class FSB():
             self.mask1 = np.ones(self.npix)
         else:
             self.mask1 = mask1
+        fmask1 = nmt.NmtField(mask1, None, spin=0, lmax_mask=self.lmax, lmax=self.lmax)
+        self.rmask = self.mask1 > 0 # binary version of mask1
+        frmask = nmt.NmtField(self.rmask, None, spin=0, lmax_mask=self.lmax, lmax=self.lmax)
 
         if map2 is None:
             self.map2 = map1
@@ -133,63 +178,71 @@ class FSB():
         else:
             self.map2 = map2
             self.twofields = True
+
         if mask2 is None:
             self.mask2 = mask1
+            fmask2 = fmask1
+            # self.rmask2 = self.rmask
+            # frmask2 = frmask
         else:
             self.mask2 = mask2
-        
-        self.rmask = self.mask1 > 0 # binary version of mask1
-        self.rmask2 = self.mask2 > 0 # binary version of mask2 (used in generalised FSB)
+            fmask2 = nmt.NmtField(self.mask2, None, spin=0, lmax_mask=self.lmax, lmax=self.lmax)
+            # self.rmask2 = self.mask2 > 0 # binary version of mask2 (used in generalised FSB)
+            # frmask2 = nmt.NmtField(self.rmask2, None, spin=0)
+
         # remasking fields appropriately + need to make sure fields within new mask is 0
         # not sure we should have these actually... 
         # self.map1 = (self.map1-np.mean(self.map1[self.mask1!=0])) # fixed: now works for non-bin masks
         # self.map2 = (self.map2-np.mean(self.map2[self.mask2!=0])) # fixed: now works for non-bin masks
 
-        # filters
-        self.filters = filters
-        self.nbands = len(self.filters)
-
-        # binning # TODO: relabel those to make them more explicit
-        self.ells_per_bin = ells_per_bin
-        self.lmax = 3*self.nside-1
-        self.bb = nmt.NmtBin.from_lmax_linear(self.lmax, self.ells_per_bin)
-        self.b = len(self.bb.get_effective_ells())
-        self.bins = get_filters(self.b, self.nside) # filters corresponding to bins (for generalized fsb)
-        # this is specifically for n222 calculation
-        self._ls = np.arange(self.lmax+1)
-        self._bin_n222 = nmt.NmtBin.from_lmax_linear(self.lmax, 1)
-        self._beam = np.ones(self.lmax+1)
-
+        
 
         # workspaces and fsky
-        self.w_fsb = self.return_wkspace(self.rmask, self.mask2, self.ells_per_bin)
+        if w_fsb is None:
+            # self.w_fsb = self.return_wkspace(self.rmask, self.mask2, self.bb)
+            self.w_fsb = nmt.NmtWorkspace(frmask, fmask2, self.bb)
+        else:
+            self.w_fsb = w_fsb
         self.fsky_fsb = np.mean(self.rmask*self.mask2)
 
-        self.w_fsb_pure = self.return_wkspace(self.rmask, self.mask1, self.ells_per_bin)
+        if w_fsb_pure is None:
+            if self.twofields:
+                self.w_fsb_pure = nmt.NmtWorkspace(frmask, fmask1, self.bb)
+            else:
+                self.w_fsb_pure = self.w_fsb
+        else:
+            self.w_fsb_pure = w_fsb_pure
         self.fsky_fsb_pure = np.mean(self.rmask*self.mask1)
-        
-        self.w_cls_11 = self.return_wkspace(self.mask1, self.mask1, self.ells_per_bin)
-        self.fsky_cls_11 = np.mean(self.mask1*self.mask1)
 
-        self.w_cls_12 = self.return_wkspace(self.mask1, self.mask2, self.ells_per_bin)
+        self.w_fsb_linterm = w_fsb_linterm
+    
+        self.fsky_cls_11 = np.mean(self.mask1*self.mask1) # hopefully we don't need it before we call this? but we might...
         self.fsky_cls_12 = np.mean(self.mask1*self.mask2)
-
-        self.w_cls_22 = self.return_wkspace(self.mask2, self.mask2, self.ells_per_bin)
         self.fsky_cls_22 = np.mean(self.mask2*self.mask2)
-
-        # self.w_cls_rr = self.return_wkspace(self.rmask, self.rmask, self.ells_per_bin)
         self.fsky_cls_rr = np.mean(self.rmask*self.rmask)
 
         # fields
-        self.field1 = nmt.NmtField(self.mask1, [self.map1], masked_on_input=moi, n_iter=self.niter) # TODO: check what moi does for non-bin masks
+        self.field1 = nmt.NmtField(self.mask1, [self.map1], masked_on_input=moi, n_iter=self.niter, lmax_mask=self.lmax, lmax=self.lmax) # TODO: check what moi does for non-bin masks
         if map2 is None:
             self.field2 = self.field1
         else:
-            self.field2 = nmt.NmtField(self.mask2, [self.map2], masked_on_input=moi, n_iter=self.niter) # TODO: check what moi does for non-bin masks
+            self.field2 = nmt.NmtField(self.mask2, [self.map2], masked_on_input=moi, n_iter=self.niter, lmax_mask=self.lmax, lmax=self.lmax) # TODO: check what moi does for non-bin masks
 
         # self.cls_1F1Bx2 = None # TODO: make default usage with self.filters and self.binfilters
         self._genfsbs = {}
 
+
+    @cached_property
+    def w_cls_11(self):
+        return nmt.NmtWorkspace(self.field1, self.field1, self.bb)
+
+    @cached_property
+    def w_cls_12(self):
+        return nmt.NmtWorkspace(self.field1, self.field2, self.bb)
+    
+    @cached_property
+    def w_cls_22(self):
+        return nmt.NmtWorkspace(self.field2, self.field2, self.bb)
     
     @cached_property
     def f1s(self):
@@ -204,16 +257,33 @@ class FSB():
         return self.get_fsb() / self.fsky_fsb
     
     @cached_property
-    def fsb_binned(self):
+    def fsb_binned(self): # 112
         return self.get_fsb(wksp=self.w_fsb)
 
     @cached_property
-    def fsb_unbinned_pure(self): 
+    def fsb_unbinned_pure(self): # 111
         return self.get_cls_field(self.f1s, field2=np.array([self.field1])) / self.fsky_fsb_pure
     
     @cached_property
-    def fsb_binned_pure(self): 
+    def fsb_binned_pure(self): # 111
         return self.get_cls_field(self.f1s, field2=np.array([self.field1]), wksp=self.w_fsb_pure) 
+
+    @cached_property
+    def fsb_binned_121(self): # 121
+        # cross multiply maps first
+        mp_filt_x = np.array([
+            hp.alm2map(hp.almxfl(self.field1.alm.squeeze(), fl), self.nside, lmax=self.lmax)*hp.alm2map(hp.almxfl(self.field2.alm.squeeze(), fl), self.nside, lmax=self.lmax) 
+            for fl in self.filters
+            ])  
+        # overlap binary mask
+        rmask_12 = (self.mask1*self.mask2)>0
+        f1x2 = np.array([nmt.NmtField(rmask_12, [m], masked_on_input=False, n_iter=self.niter, lmax_mask=self.lmax, lmax=self.lmax) for m in mp_filt_x])
+        # you now need to decouple it: the workspace is for rmask(overlap), mask1 (mei you thus far, unless provided)
+        if self.w_fsb_linterm is None:
+            # rmask(overlap), mask1
+            frmask_12 = nmt.NmtField(rmask_12, None, spin=0, lmax_mask=self.lmax, lmax=self.lmax)
+            self.w_fsb_linterm = nmt.NmtWorkspace(frmask_12, self.field1, self.bb)
+        return self.get_cls_field(f1x2, field2=np.array([self.field1]), wksp=self.w_fsb_linterm)
     
     @cached_property
     def cls_11_unbinned(self):
@@ -260,37 +330,35 @@ class FSB():
         return self.get_cov_cross(n222=False, n32=False)
     
 
-    def return_wkspace(self, mask1, mask2, lpb): 
+    # def return_wkspace(self, mask1, mask2, nmtbin): 
 
-        """
-        Creates an `NmtWorkspace` object from mask(s) and
-        a binning scheme.
+    #     """
+    #     Creates an `NmtWorkspace` object from mask(s) and
+    #     a binning scheme.
 
-        Arguments
-        ----------
-        mask1 : array
-            healpy map of size (12*nside**2)
-        mask2 : array
-            a healpy map of the same size as mask1
-        ells_per_bin : int (default = 10)
-            the number of ells in each bin in the binning scheme.
+    #     Arguments
+    #     ----------
+    #     mask1 : array
+    #         healpy map of size (12*nside**2)
+    #     mask2 : array
+    #         a healpy map of the same size as mask1
+    #     ells_per_bin : int (default = 10)
+    #         the number of ells in each bin in the binning scheme.
 
-        Returns
-        ----------
-        A `NmtWorkspace` object corresponding to the
-        given mask(s) and binning scheme.
+    #     Returns
+    #     ----------
+    #     A `NmtWorkspace` object corresponding to the
+    #     given mask(s) and binning scheme.
         
-        """
+    #     """
             
-        fmask1 = nmt.NmtField(mask1, None, spin=0)
-        fmask2 = nmt.NmtField(mask2, None, spin=0)
+    #     fmask1 = nmt.NmtField(mask1, None, spin=0)
+    #     fmask2 = nmt.NmtField(mask2, None, spin=0)
 
-        b = nmt.NmtBin.from_lmax_linear(self.lmax, lpb)
+    #     w12 = nmt.NmtWorkspace()
+    #     w12.compute_coupling_matrix(fmask1, fmask2, nmtbin)
 
-        w12 = nmt.NmtWorkspace()
-        w12.compute_coupling_matrix(fmask1, fmask2, b)
-
-        return w12 
+    #     return w12 
 
 
 
@@ -309,15 +377,15 @@ class FSB():
         # mask1_bin = self.effmask>0   
         # map1 = self.map1*mask1_bin  
 
-        alm1 = hp.map2alm(self.map1, iter=self.niter)
+        # alm1 = hp.map2alm(self.map1, iter=self.niter)
         
-        mp_filt_sq = np.array([hp.alm2map(hp.almxfl(alm1, fl), self.nside, lmax=self.lmax)**2 for fl in self.filters])  
+        mp_filt_sq = np.array([hp.alm2map(hp.almxfl(self.field1.alm.squeeze(), fl), self.nside, lmax=self.lmax)**2 for fl in self.filters])  
 
         # # FIXME: sara's fix (potentially affects covariance)
         # # print(np.mean(mp_filt_sq, axis=1))
         # mp_filt_sq = np.array([(mp_filt_sq[i]-np.average(mp_filt_sq[i], weights=self.rmask))*self.rmask for i in range(len(mp_filt_sq))]) 
         
-        f1sq = [nmt.NmtField(self.rmask, [m], masked_on_input=False, n_iter=self.niter) for m in mp_filt_sq] 
+        f1sq = [nmt.NmtField(self.rmask, [m], masked_on_input=False, n_iter=self.niter, lmax_mask=self.lmax, lmax=self.lmax) for m in mp_filt_sq] 
         
         return np.array(f1sq)
     
@@ -364,7 +432,7 @@ class FSB():
 
             if wksp is None: # cross power spectra, unbinned
 
-                claa = np.zeros((len(field1), len(field2), 3*self.nside)) 
+                claa = np.zeros((len(field1), len(field2), self.lmax+1)) 
 
                 if same:
                     for n in range(len(field1)):
@@ -431,9 +499,9 @@ class FSB():
 
         # if hasattr(self, 'cov_cross_gauss') is False:
         
-        fmask_r = nmt.NmtField(self.rmask, None, spin=0)
-        fmask_1 = nmt.NmtField(self.mask1, None, spin=0)
-        fmask_2 = nmt.NmtField(self.mask2, None, spin=0)
+        fmask_r = nmt.NmtField(self.rmask, None, spin=0, lmax_mask=self.lmax, lmax=self.lmax)
+        fmask_1 = nmt.NmtField(self.mask1, None, spin=0, lmax_mask=self.lmax, lmax=self.lmax)
+        fmask_2 = nmt.NmtField(self.mask2, None, spin=0, lmax_mask=self.lmax, lmax=self.lmax)
         # TODO: maybe make them attributes?
         cw_fsbfsb = nmt.NmtCovarianceWorkspace(fmask_r, fmask_2, fmask_r, fmask_2)
         cw_fsbcls = nmt.NmtCovarianceWorkspace(fmask_r, fmask_2, fmask_1, fmask_2)
@@ -504,8 +572,8 @@ class FSB():
     
     def get_cov_cls(self, insquares=True):
 
-        fmask_1 = nmt.NmtField(self.mask1, None, spin=0)
-        fmask_2 = nmt.NmtField(self.mask2, None, spin=0)
+        fmask_1 = nmt.NmtField(self.mask1, None, spin=0, lmax_mask=self.lmax, lmax=self.lmax)
+        fmask_2 = nmt.NmtField(self.mask2, None, spin=0, lmax_mask=self.lmax, lmax=self.lmax)
 
         cw_1212 = nmt.NmtCovarianceWorkspace(fmask_1, fmask_2, fmask_1, fmask_2) # gk, gk
         cw_1211 = nmt.NmtCovarianceWorkspace(fmask_1, fmask_1, fmask_1, fmask_2) # gg, gk
@@ -536,8 +604,8 @@ class FSB():
 
         # if hasattr(self, 'cov_auto_gauss') is False:
     
-        fmask_r = nmt.NmtField(self.rmask, None, spin=0)
-        fmask_1 = nmt.NmtField(self.mask1, None, spin=0)
+        fmask_r = nmt.NmtField(self.rmask, None, spin=0, lmax_mask=self.lmax, lmax=self.lmax)
+        fmask_1 = nmt.NmtField(self.mask1, None, spin=0, lmax_mask=self.lmax, lmax=self.lmax)
 
         cw_fsbfsb = nmt.NmtCovarianceWorkspace(fmask_r, fmask_1, fmask_r, fmask_1)
         cw_fsbcls = nmt.NmtCovarianceWorkspace(fmask_1, fmask_r, fmask_1, fmask_1)
@@ -599,9 +667,9 @@ class FSB():
 
         """TODO: add description of shape of matrix"""
 
-        fmask_r = nmt.NmtField(self.rmask, None, spin=0)
-        fmask_1 = nmt.NmtField(self.mask1, None, spin=0)
-        fmask_2 = nmt.NmtField(self.mask2, None, spin=0)
+        fmask_r = nmt.NmtField(self.rmask, None, spin=0, lmax_mask=self.lmax, lmax=self.lmax)
+        fmask_1 = nmt.NmtField(self.mask1, None, spin=0, lmax_mask=self.lmax, lmax=self.lmax)
+        fmask_2 = nmt.NmtField(self.mask2, None, spin=0, lmax_mask=self.lmax, lmax=self.lmax)
 
         cw_ggkggg = nmt.NmtCovarianceWorkspace(fmask_r, fmask_2, fmask_r, fmask_1)
         cw_ggkgg = nmt.NmtCovarianceWorkspace(fmask_r, fmask_2, fmask_1, fmask_1)
@@ -685,7 +753,7 @@ class FSB():
 
 
 
-    def _get_n222_term(self, filter, cl_out_one, cl_out_two):
+    def _get_n222_term(self, filter_one, filter_two, cl_out_one, cl_out_two):
 
         """
         Computes the N222 term for each FSB.
@@ -706,9 +774,9 @@ class FSB():
 
         # the cls within the sum are always the same for ggg x ggg, ggg x ggk, ggk x ggk
         # the cls outside varies for each of the three cases listed above
-        cls_in_f = self.cls_11_unbinned*filter #/ self.fsky_cls_11
-        cls_out1_f = cl_out_one*filter
-        cls_out2_f = cl_out_two*filter
+        cls_in_f = self.cls_11_unbinned*filter_one * filter_two #/ self.fsky_cls_11
+        cls_out1_f = cl_out_one*filter_one
+        cls_out2_f = cl_out_two*filter_two
 
         w = nmt.nmtlib.comp_coupling_matrix(0, 0, self.lmax, self.lmax, 0, 0, 0, 0, 0,
                                             0.0, self._beam, self._beam, cls_in_f,
@@ -734,11 +802,15 @@ class FSB():
 
         n222 = np.zeros((len(self.filters)+1, len(self.filters)+1, self.b, self.b))
 
-        for nb in range(self.nbands):
-            n222ub = self._get_n222_term(self.filters[nb], cl_out_one, cl_out_two)
-            n222_bin1 = np.array([self.bb.bin_cell(row) for row in n222ub])
-            n222_final = np.array([self.bb.bin_cell(col) for col in n222_bin1.T]).T
-            n222[nb, nb] += n222_final 
+        overlap_filters = self.filters @ self.filters.T 
+
+        for nb1 in range(self.nbands):
+            for nb2 in range(self.nbands):
+                if overlap_filters[nb1, nb2] != 0: 
+                    n222ub = self._get_n222_term(self.filters[nb1], self.filters[nb2], cl_out_one, cl_out_two)
+                    n222_bin1 = np.array([self.bb.bin_cell(row) for row in n222ub])
+                    n222_final = np.array([self.bb.bin_cell(col) for col in n222_bin1.T]).T
+                    n222[nb1, nb2] += n222_final 
 
         return n222 / fskycorrection
 
@@ -755,6 +827,7 @@ class FSB():
             the map combination of the general fsb: 
             '111', '112', '122' is all one should need for 
             covariance calculations
+            # we also need '121' for the linear term!
         m1, m2, m3: NmtField objects
             field corresponding to the three fields
             indicated in the id argument: if id is 
@@ -788,8 +861,9 @@ class FSB():
             for b in range(len(filters2)):
                 print('\t\t', b)
                 map_FB = maps_F[f]*maps_B[b]
-                genfsb[f, b] = hp.anafast(map_FB, m3.maps[0]) / (localfsky * self.ells_per_bin)
-
+                # genfsb[f, b] = hp.anafast(map_FB, m3.maps[0]) / (localfsky * self.ells_per_bin)
+                genfsb[f, b] = hp.anafast(map_FB, m3.maps[0]) / (localfsky * self.bb.get_nell_list(b))
+                
         self._genfsbs[id] = genfsb
 
 
