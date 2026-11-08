@@ -22,7 +22,6 @@ FSB
     Methods
     ---------
     __init__
-    return_wkspace
     f1s
     fsb_binned
     cls_12_binned
@@ -39,7 +38,6 @@ FSB
     cls_11_binned
     master_datavector
     cls_datavector
-    return_wkspace
     filtered_sq_fields
     get_cls_field
     get_fsb
@@ -53,7 +51,6 @@ FSB
     _get_general_fsb
     twonickels
     get_n32_cov
-    get_full_cov
 '''
 
 ######################################################
@@ -137,10 +134,6 @@ class FSB():
 
         self.niter = niter
 
-        # filters
-        self.filters = filters
-        self.nbands = len(self.filters)
-
         # binning # TODO: relabel those to make them more explicit
         if nmtbin is None:
             self.lmax = 3*self.nside-1
@@ -148,6 +141,15 @@ class FSB():
         else:
             self.bb = nmtbin
             self.lmax = nmtbin.lmax
+
+        # filters: size should be (nbands x lmax+1)
+        if filters.shape[1] > (self.lmax+1):
+            filters = filters[:,:self.lmax+1]
+        elif filters.shape[1] < (self.lmax+1):
+            diff = self.lmax-filters.shape[1]
+            filters = np.pad(filters, ((0,0), (0, diff)))
+        self.filters = filters
+        self.nbands = len(self.filters)
         
         self.b = self.bb.get_n_bands() # len(self.bb.get_effective_ells())
         self.bins = get_filters(None, None, self.bb) # get_filters(self.b, self.nside) # filters corresponding to bins (for generalized fsb)
@@ -199,7 +201,6 @@ class FSB():
 
         # workspaces and fsky
         if w_fsb is None:
-            # self.w_fsb = self.return_wkspace(self.rmask, self.mask2, self.bb)
             self.w_fsb = nmt.NmtWorkspace(frmask, fmask2, self.bb)
         else:
             self.w_fsb = w_fsb
@@ -329,38 +330,6 @@ class FSB():
     def cov_cross_gauss(self):
         return self.get_cov_cross(n222=False, n32=False)
     
-
-    # def return_wkspace(self, mask1, mask2, nmtbin): 
-
-    #     """
-    #     Creates an `NmtWorkspace` object from mask(s) and
-    #     a binning scheme.
-
-    #     Arguments
-    #     ----------
-    #     mask1 : array
-    #         healpy map of size (12*nside**2)
-    #     mask2 : array
-    #         a healpy map of the same size as mask1
-    #     ells_per_bin : int (default = 10)
-    #         the number of ells in each bin in the binning scheme.
-
-    #     Returns
-    #     ----------
-    #     A `NmtWorkspace` object corresponding to the
-    #     given mask(s) and binning scheme.
-        
-    #     """
-            
-    #     fmask1 = nmt.NmtField(mask1, None, spin=0)
-    #     fmask2 = nmt.NmtField(mask2, None, spin=0)
-
-    #     w12 = nmt.NmtWorkspace()
-    #     w12.compute_coupling_matrix(fmask1, fmask2, nmtbin)
-
-    #     return w12 
-
-
 
     def filtered_sq_fields(self):
 
@@ -497,8 +466,7 @@ class FSB():
 
     def get_cov_cross(self, n222=True, n32=False, insquares=True):
 
-        # if hasattr(self, 'cov_cross_gauss') is False:
-        
+        # dont we already have these in the fields?        
         fmask_r = nmt.NmtField(self.rmask, None, spin=0, lmax_mask=self.lmax, lmax=self.lmax)
         fmask_1 = nmt.NmtField(self.mask1, None, spin=0, lmax_mask=self.lmax, lmax=self.lmax)
         fmask_2 = nmt.NmtField(self.mask2, None, spin=0, lmax_mask=self.lmax, lmax=self.lmax)
@@ -783,7 +751,8 @@ class FSB():
                                             self._bin_n222.bin, 0, -1, -1, -1)
         sum_l1 = nmt.nmtlib.get_mcm(w, (self.lmax+1)**2).reshape([self.lmax+1, self.lmax+1])
         sum_l1 /= (2*self._ls+1)[None, :]
-        cov = sum_l1 * 4 * np.outer(cls_out1_f, cls_out2_f)
+        # cov = sum_l1 * 4 * np.outer(cls_out1_f, cls_out2_f)
+        cov = sum_l1 * 4 * np.outer(cls_out2_f, cls_out1_f) # to match shape from sim-based cov
         nmt.nmtlib.workspace_free(w)
 
         return cov
@@ -955,36 +924,6 @@ class FSB():
         return n32 / fskycorrection
     
     
-
-    # def get_full_cov(self, insquares=False, n32=True):
-
-    #     """
-    #     Adds the mask-corrected, binned gaussian-
-    #     limit covariance and its main mask-corrected, 
-    #     binned non-gaussian contributions. 
-
-    #     Returns
-    #     ----------
-    #     An array of dimensions ((nbands+1)*nbins, (nbands+1)*nbins),
-    #     or if insquares set to True, an array of dimensions 
-    #     ((nbands+1), (nbands+1), nbins, nbins).
-    #     """
-    #     # if self.gauss_cov is None:
-    #     #     self.gauss_cov = self.get_gauss_cov()
-
-    #     cl_out = self.cls_12_unbinned #/self.fsky_cls_12
-
-    #     if n32:
-    #         self.full_cov_large = self.gauss_cov + self.get_n222_cov(cl_out, cl_out, self.fsky_cls_12) + self.get_n32_cov(self.filters, self.bins)
-    #     else: # bypass n32 altogether if not needed
-    #         self.full_cov_large = self.gauss_cov + self.get_n222_cov(cl_out, cl_out, self.fsky_cls_12)
-        
-    #     if insquares:
-    #         return self.full_cov_large
-    #     else:
-    #         return _reduce2(self.full_cov_large)
-
-
 
 
 
