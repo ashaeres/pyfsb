@@ -134,6 +134,9 @@ class FSB():
 
         self.niter = niter
 
+        self.npix = len(map1)
+        self.nside = hp.npix2nside(self.npix)
+
         # binning # TODO: relabel those to make them more explicit
         if nmtbin is None:
             self.lmax = 3*self.nside-1
@@ -162,9 +165,6 @@ class FSB():
 
         # maps and masks
         self.map1 = map1
-
-        self.npix = len(self.map1)
-        self.nside = hp.npix2nside(self.npix)
 
         if mask1 is None:
             self.mask1 = np.ones(self.npix)
