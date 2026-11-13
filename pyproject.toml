@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pyfsb"
+version = "0.1.0"
+description = "A pymaster extension for Filtered-Squared Bispectra (FSBs)"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "GPL-3.0-only"
+authors = [
+    { name = "Lea Harscouet", email = "lea.harscouet@physics.ox.ac.uk" },
+]
+dependencies = [
+    "numpy",
+    "healpy",
+    "pymaster",
+]
+
+[project.optional-dependencies]
+test = ["pytest"]
+# extra packages needed to run examples/howtouse.ipynb
+examples = ["matplotlib", "scipy", "pyccl", "jupyter"]
+
+[project.urls]
+Repository = "https://github.com/ashaeres/pyfsb"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
