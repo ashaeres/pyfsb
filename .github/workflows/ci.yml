@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        # login shell, so that the conda environment is activated
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies from conda-forge
+        uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: pyfsb
+          create-args: >-
+            python=3.12
+            pip
+            numpy
+            healpy
+            namaster
+            pytest
+          condarc: |
+            channels:
+              - conda-forge
+            channel_priority: strict
+
+      - name: Install pyfsb
+        run: pip install --no-deps .
+
+      - name: Run tests
+        run: pytest -v
